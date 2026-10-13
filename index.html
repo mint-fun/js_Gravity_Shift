@@ -1,0 +1,539 @@
+<html>
+
+<head>
+  <style></style>
+</head>
+
+<body>
+
+<script>
+//-------Hier einfügen-----------------------
+
+let hero, level = 1, crystals = 0, score = 0;
+let unlocked = 1, upgrades, platforms, traps, gems, particles;
+let worldW, cameraX = 0, state = "menu", grav = 1;
+let shieldTime = 0, slowTime = 0, message = "";
+let savedBest = 1;
+
+function setup() {
+  createCanvas(850, 500);
+  textFont("sans-serif");
+  upgrades = {speed: 0, jump: 0, shield: 0, slow: 0};
+  try {
+    savedBest = Number(localStorage.getItem("gravityBest")) || 1;
+    crystals = Number(localStorage.getItem("gravityCrystals")) || 0;
+    upgrades = JSON.parse(localStorage.getItem("gravityUpgrades")) || upgrades;
+    unlocked = savedBest;
+  } catch(e) {}
+  initLevel();
+}
+
+function saveGame() {
+  try {
+    localStorage.setItem("gravityBest", unlocked);
+    localStorage.setItem("gravityCrystals", crystals);
+    localStorage.setItem("gravityUpgrades", JSON.stringify(upgrades));
+  } catch(e) {}
+}
+
+function initLevel() {
+  worldW = 1500 + level * 65;
+  hero = {
+    x: 65, y: 350, vx: 0, vy: 0,
+    w: 27, h: 31, grounded: false, inv: 0
+  };
+  grav = 1;
+  cameraX = 0;
+  platforms = [{x: 0, y: 430, w: 300, h: 70}];
+  traps = [];
+  gems = [];
+  particles = [];
+
+  let x = 320;
+  while (x < worldW - 200) {
+    let gap = random(65, min(105 + level * 1.7, 170));
+    let y = random(270, 400);
+    let w = random(90, 155);
+    platforms.push({x, y, w, h: 18});
+
+    // Deckenplattformen zum Wechseln der Schwerkraft
+    if (level >= 2 && random() < 0.65) {
+      platforms.push({
+        x: x + random(0, 25),
+        y: random(65, 145),
+        w: random(90, 150),
+        h: 18
+      });
+    }
+
+    // Fallen
+    if (level >= 2 && random() < min(0.25 + level * 0.018, 0.65)) {
+      traps.push({
+        x: x + w / 2,
+        y: y - 15,
+        w: 28,
+        h: 15,
+        moving: level >= 5 && random() < 0.4,
+        phase: random(TWO_PI)
+      });
+    }
+
+    // Kristalle
+    for (let j = 0; j < 2 + floor(level / 8); j++) {
+      gems.push({
+        x: x + 22 + j * 26,
+        y: y - 35 - random(0, 30),
+        got: false
+      });
+    }
+
+    x += w + gap;
+  }
+
+  platforms.push({x: worldW - 170, y: 430, w: 210, h: 70});
+
+  // Bonuskristalle im Startbereich
+  for (let i = 0; i < 3; i++) {
+    gems.push({x: 110 + i * 48, y: 360, got: false});
+  }
+}
+
+function draw() {
+  background(12, 15, 42);
+
+  // Neonsterne
+  noStroke();
+  for (let i = 0; i < 55; i++) {
+    fill(100, 180, 255, 80 + sin(frameCount * 0.03 + i) * 60);
+    circle((i * 157) % width, (i * 83) % height, 2 + i % 3);
+  }
+
+  if (state === "menu") {
+    drawMenu();
+    return;
+  }
+  if (state === "shop") {
+    drawShop();
+    return;
+  }
+  if (state === "won") {
+    drawEnd();
+    return;
+  }
+
+  if (state === "play") updateGame();
+
+  cameraX = constrain(hero.x - 260, 0, worldW - width);
+
+  push();
+  translate(-cameraX, 0);
+
+  // Plattformen
+  for (let p of platforms) {
+    noStroke();
+    fill(35, 50, 95);
+    rect(p.x, p.y, p.w, p.h, 5);
+    fill(0, 235, 255);
+    rect(p.x, p.y, p.w, 4, 3);
+    fill(90, 110, 170, 100);
+    rect(p.x + 8, p.y + 7, p.w - 16, 3);
+  }
+
+  // Fallen
+  for (let t of traps) {
+    let ty = t.y;
+    if (t.moving) ty += sin(frameCount * 0.04 + t.phase) * 35;
+    fill(255, 45, 100);
+    for (let i = 0; i < 4; i++) {
+      triangle(t.x - t.w/2 + i * 8, ty + t.h,
+               t.x - t.w/2 + 4 + i * 8, ty,
+               t.x - t.w/2 + 8 + i * 8, ty + t.h);
+    }
+    t.currentY = ty;
+  }
+
+  // Kristalle
+  for (let g of gems) {
+    if (g.got) continue;
+    push();
+    translate(g.x, g.y);
+    rotate(frameCount * 0.035);
+    noStroke();
+    fill(0, 240, 255);
+    beginShape();
+    vertex(0, -11);
+    vertex(8, 0);
+    vertex(0, 11);
+    vertex(-8, 0);
+    endShape(CLOSE);
+    fill(255);
+    circle(-2, -3, 3);
+    pop();
+  }
+
+  // Level-Ausgang
+  noStroke();
+  fill(170, 80, 255, 90);
+  ellipse(worldW - 100, 365, 85, 115);
+  fill(80, 240, 255);
+  ellipse(worldW - 100, 365, 44, 75);
+  fill(255);
+  textAlign(CENTER);
+  textSize(14);
+  text("EXIT", worldW - 100, 425);
+
+  // Spieler
+  drawHero();
+
+  // Partikel
+  for (let p of particles) {
+    p.x += p.vx;
+    p.y += p.vy;
+    p.life--;
+    fill(0, 235, 255, max(0, p.life * 8));
+    circle(p.x, p.y, 4);
+  }
+  particles = particles.filter(p => p.life > 0);
+
+  pop();
+  drawHUD();
+}
+
+function updateGame() {
+  if (hero.inv > 0) hero.inv--;
+  if (shieldTime > 0) shieldTime--;
+  if (slowTime > 0) slowTime--;
+
+  let dir = 0;
+  if (keyIsDown(LEFT_ARROW) || keyIsDown(65)) dir--;
+  if (keyIsDown(RIGHT_ARROW) || keyIsDown(68)) dir++;
+
+  let speed = 3.7 + upgrades.speed * 0.65;
+  if (slowTime > 0) speed *= 0.65;
+
+  hero.vx = lerp(hero.vx, dir * speed, 0.24);
+  hero.x += hero.vx;
+
+  hero.vy += grav * (slowTime > 0 ? 0.25 : 0.52);
+  hero.vy = constrain(hero.vy, -11, 11);
+
+  let oldY = hero.y;
+  hero.y += hero.vy;
+  hero.grounded = false;
+
+  for (let p of platforms) {
+    if (hero.x + hero.w > p.x && hero.x < p.x + p.w) {
+      if (grav > 0 && hero.vy >= 0 &&
+          oldY + hero.h <= p.y + 5 &&
+          hero.y + hero.h >= p.y) {
+        hero.y = p.y - hero.h;
+        hero.vy = 0;
+        hero.grounded = true;
+      }
+      if (grav < 0 && hero.vy <= 0 &&
+          oldY >= p.y + p.h - 4 &&
+          hero.y <= p.y + p.h) {
+        hero.y = p.y + p.h;
+        hero.vy = 0;
+        hero.grounded = true;
+      }
+    }
+  }
+
+  hero.x = constrain(hero.x, 0, worldW);
+
+  // Fallen-Kollisionen
+  for (let t of traps) {
+    let ty = t.currentY || t.y;
+    if (hero.x + hero.w > t.x - t.w/2 &&
+        hero.x < t.x + t.w/2 &&
+        hero.y + hero.h > ty &&
+        hero.y < ty + t.h) {
+      hitTrap();
+    }
+  }
+
+  // Kristalle einsammeln
+  for (let g of gems) {
+    if (!g.got && dist(hero.x + 13, hero.y + 15, g.x, g.y) < 25) {
+      g.got = true;
+      crystals++;
+      score += 10;
+      for (let i = 0; i < 7; i++) {
+        particles.push({
+          x: g.x, y: g.y,
+          vx: random(-2, 2), vy: random(-3, 1), life: 20
+        });
+      }
+      saveGame();
+    }
+  }
+
+  // Absturz
+  if (hero.y > height + 70 || hero.y + hero.h < -70) {
+    hitTrap();
+  }
+
+  // Ausgang
+  if (hero.x > worldW - 135) {
+    if (level >= 30) {
+      state = "won";
+    } else {
+      unlocked = max(unlocked, level + 1);
+      level++;
+      crystals += 5;
+      saveGame();
+      state = "shop";
+    }
+  }
+}
+
+function hitTrap() {
+  if (hero.inv > 0 || state !== "play") return;
+
+  if (shieldTime > 0) {
+    shieldTime = 0;
+    hero.inv = 50;
+    hero.vy = -grav * 6;
+    return;
+  }
+
+  // Checkpoint: bei Treffer an den Levelanfang
+  hero.x = max(45, hero.x - 130);
+  hero.y = grav > 0 ? 320 : 100;
+  hero.vx = 0;
+  hero.vy = -grav * 5;
+  hero.inv = 80;
+  message = "AU! Pass auf die Fallen auf!";
+}
+
+function drawHero() {
+  push();
+  translate(hero.x, hero.y);
+
+  if (hero.inv > 0 && frameCount % 8 < 4) {
+    pop();
+    return;
+  }
+
+  noStroke();
+  fill(0, 230, 255, 50);
+  ellipse(hero.w/2, hero.h/2, 55, 55);
+
+  fill(20, 235, 255);
+  rect(0, 0, hero.w, hero.h, 7);
+  fill(255);
+  rect(5, 7, 7, 8, 2);
+  rect(16, 7, 7, 8, 2);
+  fill(10, 20, 45);
+  rect(8, 9, 3, 4);
+  rect(19, 9, 3, 4);
+  stroke(10, 40, 70);
+  strokeWeight(2);
+  line(8, 22, 19, 22);
+
+  if (shieldTime > 0) {
+    noFill();
+    stroke(80, 255, 140);
+    strokeWeight(3);
+    ellipse(hero.w/2, hero.h/2, 54, 54);
+  }
+  pop();
+}
+
+function drawHUD() {
+  noStroke();
+  fill(10, 15, 40, 225);
+  rect(12, 12, 300, 65, 12);
+  fill(255);
+  textAlign(LEFT, CENTER);
+  textSize(17);
+  text("LEVEL " + level + " / 30", 25, 32);
+  fill(0, 235, 255);
+  text("◆ Kristalle: " + crystals, 25, 57);
+
+  fill(10, 15, 40, 225);
+  rect(width - 235, 12, 220, 65, 12);
+  fill(255);
+  textAlign(CENTER);
+  textSize(14);
+  text("G = Schwerkraft wechseln", width - 125, 32);
+  text("SPACE = Springen", width - 125, 55);
+
+  if (message !== "" && hero.inv > 0) {
+    fill(255, 100, 130);
+    textSize(15);
+    text(message, width/2, height - 28);
+  }
+}
+
+function drawMenu() {
+  textAlign(CENTER, CENTER);
+  fill(0, 235, 255);
+  textSize(48);
+  text("GRAVITY SHIFT", width/2, 130);
+  fill(255);
+  textSize(21);
+  text("Drehe die Welt um. Entkomme aus 30 Leveln!", width/2, 185);
+  textSize(16);
+  text("Kristalle sammeln • Fallen umgehen • Upgrades kaufen",
+       width/2, 225);
+
+  button(width/2 - 120, 275, 240, 58, "SPIEL STARTEN");
+  fill(170, 190, 230);
+  textSize(15);
+  text("Pfeiltasten / A,D laufen  •  SPACE springen",
+       width/2, 375);
+  text("G Schwerkraft  •  X Schild  •  Z Zeitlupe",
+       width/2, 402);
+  text("Freigeschaltet bis Level " + unlocked, width/2, 450);
+}
+
+function drawShop() {
+  background(15, 20, 55);
+  textAlign(CENTER, CENTER);
+  fill(0, 235, 255);
+  textSize(36);
+  text("LEVEL " + (level - 1) + " GESCHAFFT!", width/2, 65);
+  fill(255);
+  textSize(19);
+  text("+5 Bonuskristalle! Gesamt: " + crystals, width/2, 112);
+  text("Kaufe Upgrades oder starte das nächste Level", width/2, 148);
+
+  let entries = [
+    ["speed", "Turbo-Beine", "Schneller laufen", 8],
+    ["jump", "Sprungkraft", "Höher springen", 8],
+    ["shield", "Schild", "Schützt einmal vor Fallen (X)", 10],
+    ["slow", "Zeitlupe", "Verlangsamt die Welt (Z)", 10]
+  ];
+
+  for (let i = 0; i < entries.length; i++) {
+    let e = entries[i], y = 185 + i * 65;
+    fill(35, 50, 95);
+    rect(85, y, 680, 53, 10);
+    fill(255);
+    textAlign(LEFT, CENTER);
+    textSize(17);
+    text(e[1] + "  (Stufe " + upgrades[e[0]] + ")", 105, y + 17);
+    fill(170, 200, 235);
+    textSize(13);
+    text(e[2], 105, y + 39);
+    let cost = e[3] + upgrades[e[0]] * 5;
+    button(610, y + 7, 135, 39, "KAUF " + cost);
+  }
+
+  button(width/2 - 120, 465, 240, 32, "NÄCHSTES LEVEL");
+}
+
+function drawEnd() {
+  background(10, 20, 55);
+  fill(0, 255, 220);
+  textAlign(CENTER, CENTER);
+  textSize(42);
+  text("DIMENSIONEN BEZWUNGEN!", width/2, 170);
+  fill(255);
+  textSize(23);
+  text("Du hast alle 30 Level geschafft!", width/2, 240);
+  text("Kristalle gesammelt: " + crystals, width/2, 285);
+  button(width/2 - 120, 340, 240, 55, "NOCHMAL SPIELEN");
+}
+
+function button(x, y, w, h, label) {
+  noStroke();
+  fill(25, 95, 140);
+  rect(x, y, w, h, 10);
+  stroke(0, 235, 255);
+  strokeWeight(2);
+  noFill();
+  rect(x, y, w, h, 10);
+  noStroke();
+  fill(255);
+  textAlign(CENTER, CENTER);
+  textSize(16);
+  text(label, x + w/2, y + h/2);
+}
+
+function mousePressed() {
+  if (state === "menu") {
+    if (mouseX > width/2 - 120 && mouseX < width/2 + 120 &&
+        mouseY > 275 && mouseY < 333) {
+      level = 1;
+      initLevel();
+      state = "play";
+    }
+    return;
+  }
+
+  if (state === "shop") {
+    let entries = ["speed", "jump", "shield", "slow"];
+    for (let i = 0; i < 4; i++) {
+      let y = 185 + i * 65;
+      if (mouseX > 610 && mouseX < 745 &&
+          mouseY > y + 7 && mouseY < y + 46) {
+        let k = entries[i];
+        let base = (k === "shield" || k === "slow") ? 10 : 8;
+        let cost = base + upgrades[k] * 5;
+        if (crystals >= cost) {
+          crystals -= cost;
+          upgrades[k]++;
+          saveGame();
+        }
+      }
+    }
+
+    if (mouseY > 465 && mouseX > width/2 - 120 &&
+        mouseX < width/2 + 120) {
+      initLevel();
+      state = "play";
+    }
+    return;
+  }
+
+  if (state === "won") {
+    level = 1;
+    initLevel();
+    state = "play";
+  }
+}
+
+function keyPressed() {
+  if (state !== "play") return false;
+
+  if ((key === " " || keyCode === UP_ARROW) && hero.grounded) {
+    hero.vy = -grav * (9 + upgrades.jump * 1.2);
+    hero.grounded = false;
+  }
+
+  if (key === "g" || key === "G") {
+    grav *= -1;
+    hero.vy = 0;
+    hero.grounded = false;
+    hero.y += grav * 5;
+  }
+
+  if ((key === "x" || key === "X") && upgrades.shield > 0) {
+    shieldTime = 300;
+  }
+
+  if ((key === "z" || key === "Z") && upgrades.slow > 0) {
+    slowTime = 240;
+  }
+
+  return false;
+}
+
+
+
+
+
+//-------Bis hier einfügen-----------------------
+</script>
+
+// <script src="https://cdnjs.cloudflare.com/ajax/libs/p5.js/1.9.0/p5.min.js">
+<script src="https://cdn.jsdelivr.net/npm/p5@2.3.2/lib/p5.js">
+
+</script>
+
+</body>
+
+</html>
